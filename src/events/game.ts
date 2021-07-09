@@ -25,6 +25,7 @@ export class GameEvents {
           map(([gameEnd, playerFrame]) => ({
             ...gameEnd,
             winnerPlayerIndex: findWinner(playerFrame),
+            lastFrame: playerFrame,
           })),
         ),
       ),
