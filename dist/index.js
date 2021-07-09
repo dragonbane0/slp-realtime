@@ -3723,6 +3723,7 @@ class GameEvents {
           map(([gameEnd, playerFrame]) => ({
             ...gameEnd,
             winnerPlayerIndex: findWinner(playerFrame),
+            lastFrame: playerFrame,
           })),
         ),
       ),
@@ -3730,7 +3731,7 @@ class GameEvents {
     this.rawFrames$ = forAllPlayerIndices((index) => {
       return this.stream$.pipe(
         switchMap((stream) => stream.playerFrame$),
-        playerFrameFilter(index), //We only care about certain player frames
+        playerFrameFilter(index),
       );
     });
   }
