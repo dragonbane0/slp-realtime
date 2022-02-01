@@ -1,5 +1,5 @@
-import { FrameEntryType } from "../types";
-import { MonoTypeOperatorFunction, OperatorFunction } from "rxjs";
+import type { MonoTypeOperatorFunction, OperatorFunction } from "rxjs";
+import type { FrameEntryType } from "../types";
 /**
  * Filter the frames to only those that belong to the player {index}.
  */
@@ -9,7 +9,7 @@ export declare function playerFrameFilter(index: number): MonoTypeOperatorFuncti
  */
 export declare function withPreviousFrame<
   T extends {
-    frame: number;
+    frame: number | null;
   }
 >(): OperatorFunction<T, [T, T]>;
 /**

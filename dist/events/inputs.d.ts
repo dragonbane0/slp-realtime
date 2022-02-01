@@ -1,6 +1,6 @@
-import { Observable } from "rxjs";
-import { RxSlpStream } from "../stream";
-import { InputButtonCombo } from "../types";
+import type { Observable } from "rxjs";
+import type { RxSlpStream } from "../stream";
+import type { InputButtonCombo } from "../types";
 export declare class InputEvents {
   private stream$;
   constructor(stream: Observable<RxSlpStream>);

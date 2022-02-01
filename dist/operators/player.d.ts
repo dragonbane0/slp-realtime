@@ -1,6 +1,6 @@
-import { EventManagerVariables } from "../manager";
-import { MonoTypeOperatorFunction } from "rxjs";
-import { PlayerIndexFilter } from "../types";
+import type { MonoTypeOperatorFunction } from "rxjs";
+import type { EventManagerVariables } from "../manager";
+import type { PlayerIndexFilter } from "../types";
 export declare function playerFilter<
   T extends {
     playerIndex: number;
@@ -9,5 +9,5 @@ export declare function playerFilter<
 export declare const playerFilterMatches: (
   playerIndex: number,
   indices: PlayerIndexFilter,
-  variables?: EventManagerVariables,
+  variables?: EventManagerVariables | undefined,
 ) => boolean;

@@ -1,5 +1,5 @@
-import { InputButtonCombo, FrameEntryType } from "../types";
-import { MonoTypeOperatorFunction, OperatorFunction } from "rxjs";
+import type { MonoTypeOperatorFunction, OperatorFunction } from "rxjs";
+import type { FrameEntryType, InputButtonCombo } from "../types";
 /**
  * Throttle inputs for a number of frames
  */
