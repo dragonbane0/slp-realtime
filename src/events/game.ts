@@ -1,7 +1,6 @@
-import type { Observable } from "rxjs";
-import { map, switchMap, withLatestFrom } from "rxjs/operators";
-
-import type { RxSlpStream } from "../stream";
+import { Observable } from "rxjs";
+import { RxSlpStream } from "../stream";
+import { withLatestFrom, map, switchMap } from "rxjs/operators";
 import { playerFrameFilter } from "../operators/frames";
 import { findWinner } from "../utils";
 import { GameStartType, GameEndPayload, FrameEntryType } from "../types";
