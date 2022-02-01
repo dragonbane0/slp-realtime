@@ -12,8 +12,7 @@
  * [NO_GAME]               - no more files in the queue
  */
 /// <reference types="node" />
-import type { WritableOptions } from "stream";
-import { Writable } from "stream";
+import { Writable, WritableOptions } from "stream";
 export declare enum DolphinPlaybackStatus {
   FILE_LOADED = "FILE_LOADED",
   PLAYBACK_START = "PLAYBACK_START",

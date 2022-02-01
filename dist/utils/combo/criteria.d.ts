@@ -1,4 +1,4 @@
-import type { Criteria } from "./filter";
+import { Criteria } from "./filter";
 /**
  * MatchesPortNumber ensures the player performing the combo is a specific port.
  */

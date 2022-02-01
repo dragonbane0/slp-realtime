@@ -1,7 +1,7 @@
 /// <reference types="node" />
-import type { SlpFileWriterOptions } from "@slippi/slippi-js";
-import type { WritableOptions } from "stream";
 import { RxSlpStream } from "./rxSlpStream";
+import { SlpFileWriterOptions } from "@slippi/slippi-js";
+import { WritableOptions } from "stream";
 /**
  * SlpFolderStream is responsible for monitoring a folder, and detecting
  * when a new SLP file is created and is written to. This creates
@@ -19,14 +19,13 @@ import { RxSlpStream } from "./rxSlpStream";
  * @extends {RxSlpStream}
  */
 export declare class SlpFolderStream extends RxSlpStream {
+  private startRequested$;
   private stopRequested$;
   private newFile$;
   private readStream;
-  private fileWatcher;
   constructor(options?: Partial<SlpFileWriterOptions>, opts?: WritableOptions);
   private _setupSubjects;
   private endReadStream;
-  private stopFileWatcher;
   /**
    * Starts watching a particular folder for slp files. It treats all new
    * `.slp` files as though it's a live Slippi stream.
@@ -34,12 +33,7 @@ export declare class SlpFolderStream extends RxSlpStream {
    * @param {string} slpFolder
    * @memberof SlpFolderStream
    */
-  start(
-    slpFolder: string,
-    options?: {
-      includeSubfolders?: boolean;
-    },
-  ): Promise<void>;
+  start(slpFolder: string, includeSubfolders?: boolean): void;
   stop(): void;
   /**
    * Returns the latest created file that was found by folder monitoring.

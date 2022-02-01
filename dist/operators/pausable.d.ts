@@ -1,4 +1,4 @@
-import type { MonoTypeOperatorFunction, Observable } from "rxjs";
+import { Observable, MonoTypeOperatorFunction } from "rxjs";
 /**
  * Return the previous frame of the game and the current frame
  */

@@ -1,5 +1,5 @@
-import type { MonoTypeOperatorFunction, Observable, OperatorFunction } from "rxjs";
-import type { FrameEntryType, GameStartType, PostFrameUpdateType, StockType } from "../types";
+import { GameStartType, PostFrameUpdateType, StockType, FrameEntryType } from "../types";
+import { Observable, OperatorFunction, MonoTypeOperatorFunction } from "rxjs";
 /**
  * Filter only the frames where the player has just spawned
  */

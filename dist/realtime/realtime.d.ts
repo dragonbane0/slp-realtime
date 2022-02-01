@@ -1,5 +1,5 @@
-import { ComboEvents, GameEvents, InputEvents, StockEvents } from "../events";
-import type { RxSlpStream } from "../stream";
+import { RxSlpStream } from "../stream";
+import { StockEvents, InputEvents, ComboEvents, GameEvents } from "../events";
 /**
  * SlpRealTime is solely responsible for detecting notable in-game events
  * and emitting an appropriate event.

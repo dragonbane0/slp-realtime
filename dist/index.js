@@ -7,15 +7,33 @@ function _interopDefault(ex) {
 }
 
 var rxjs = require("rxjs");
-var lodash = require("lodash");
 var slippiJs = require("@slippi/slippi-js");
+var lodash = require("lodash");
 var child_process = require("child_process");
 var os = _interopDefault(require("os"));
 var stream = require("stream");
 var fs = _interopDefault(require("fs"));
-var chokidar = _interopDefault(require("chokidar"));
 var path = _interopDefault(require("path"));
+var chokidar = _interopDefault(require("chokidar"));
 var tailstream = _interopDefault(require("tailstream"));
+
+(function (ComboEvent) {
+  ComboEvent["START"] = "combo-start";
+  ComboEvent["EXTEND"] = "combo-extend";
+  ComboEvent["END"] = "combo-occurred";
+  ComboEvent["CONVERSION"] = "conversion-occurred";
+})(exports.ComboEvent || (exports.ComboEvent = {}));
+(function (GameEvent) {
+  GameEvent["GAME_START"] = "game-start";
+  GameEvent["GAME_END"] = "game-end";
+})(exports.GameEvent || (exports.GameEvent = {}));
+(function (InputEvent) {
+  InputEvent["BUTTON_COMBO"] = "button-combo";
+})(exports.InputEvent || (exports.InputEvent = {}));
+(function (StockEvent) {
+  StockEvent["PLAYER_SPAWN"] = "player-spawn";
+  StockEvent["PLAYER_DIED"] = "player-died";
+})(exports.StockEvent || (exports.StockEvent = {}));
 
 /*! *****************************************************************************
 Copyright (c) Microsoft Corporation. All rights reserved.
@@ -1815,73 +1833,6 @@ var TakeUntilSubscriber = /*@__PURE__*/ (function (_super) {
   return TakeUntilSubscriber;
 })(OuterSubscriber);
 
-/** PURE_IMPORTS_START tslib,_Subscriber,_util_noop,_util_isFunction PURE_IMPORTS_END */
-function tap(nextOrObserver, error, complete) {
-  return function tapOperatorFunction(source) {
-    return source.lift(new DoOperator(nextOrObserver, error, complete));
-  };
-}
-var DoOperator = /*@__PURE__*/ (function () {
-  function DoOperator(nextOrObserver, error, complete) {
-    this.nextOrObserver = nextOrObserver;
-    this.error = error;
-    this.complete = complete;
-  }
-  DoOperator.prototype.call = function (subscriber, source) {
-    return source.subscribe(new TapSubscriber(subscriber, this.nextOrObserver, this.error, this.complete));
-  };
-  return DoOperator;
-})();
-var TapSubscriber = /*@__PURE__*/ (function (_super) {
-  __extends(TapSubscriber, _super);
-  function TapSubscriber(destination, observerOrNext, error, complete) {
-    var _this = _super.call(this, destination) || this;
-    _this._tapNext = noop;
-    _this._tapError = noop;
-    _this._tapComplete = noop;
-    _this._tapError = error || noop;
-    _this._tapComplete = complete || noop;
-    if (isFunction(observerOrNext)) {
-      _this._context = _this;
-      _this._tapNext = observerOrNext;
-    } else if (observerOrNext) {
-      _this._context = observerOrNext;
-      _this._tapNext = observerOrNext.next || noop;
-      _this._tapError = observerOrNext.error || noop;
-      _this._tapComplete = observerOrNext.complete || noop;
-    }
-    return _this;
-  }
-  TapSubscriber.prototype._next = function (value) {
-    try {
-      this._tapNext.call(this._context, value);
-    } catch (err) {
-      this.destination.error(err);
-      return;
-    }
-    this.destination.next(value);
-  };
-  TapSubscriber.prototype._error = function (err) {
-    try {
-      this._tapError.call(this._context, err);
-    } catch (err) {
-      this.destination.error(err);
-      return;
-    }
-    this.destination.error(err);
-  };
-  TapSubscriber.prototype._complete = function () {
-    try {
-      this._tapComplete.call(this._context);
-    } catch (err) {
-      this.destination.error(err);
-      return;
-    }
-    return this.destination.complete();
-  };
-  return TapSubscriber;
-})(Subscriber);
-
 /** PURE_IMPORTS_START tslib,_OuterSubscriber,_util_subscribeToResult PURE_IMPORTS_END */
 function withLatestFrom() {
   var args = [];
@@ -1985,6 +1936,203 @@ const playerFilterMatches = (playerIndex, indices, variables) => {
   }
   return filterIndices.includes(playerIndex);
 };
+
+const readGameConfig = (game, config) => {
+  return rxjs.merge(readGameStartEvents(config, game.start$), readGameEndEvents(config, game.end$));
+};
+const readGameStartEvents = (config, gameStart$) => {
+  // Handle game start events
+  const observables = config.events
+    .filter((event) => event.type === exports.GameEvent.GAME_START)
+    .map((event) => {
+      let base$ = gameStart$;
+      const eventFilter = event.filter;
+      if (eventFilter) {
+        // Handle num players filter
+        if (eventFilter.numPlayers !== undefined) {
+          base$ = base$.pipe(filter((settings) => settings.players.length === eventFilter.numPlayers));
+        }
+        if (eventFilter.isTeams !== undefined) {
+          base$ = base$.pipe(filter((settings) => settings.isTeams === eventFilter.isTeams));
+        }
+      }
+      return base$.pipe(
+        map((context) => ({
+          id: event.id,
+          type: event.type,
+          payload: context,
+        })),
+      );
+    });
+  return rxjs.merge(...observables);
+};
+const readGameEndEvents = (config, gameEnd$) => {
+  // Handle game end events
+  const observables = config.events
+    .filter((event) => event.type === exports.GameEvent.GAME_END)
+    .map((event) => {
+      let base$ = gameEnd$;
+      const eventFilter = event.filter;
+      if (eventFilter) {
+        // Handle end method filter
+        if (eventFilter.endMethod !== undefined) {
+          base$ = base$.pipe(filter((end) => end.gameEndMethod === eventFilter.endMethod));
+        }
+        if (eventFilter.winnerPlayerIndex !== undefined) {
+          base$ = base$.pipe(
+            filter((payload) =>
+              playerFilterMatches(payload.winnerPlayerIndex, eventFilter.winnerPlayerIndex, config.variables),
+            ),
+          );
+        }
+      }
+      return base$.pipe(
+        map((context) => ({
+          id: event.id,
+          type: event.type,
+          payload: context,
+        })),
+      );
+    });
+  return rxjs.merge(...observables);
+};
+
+// Export the parameter types for events and SlippiGame for convenience
+(function (GameEndMethod) {
+  GameEndMethod[(GameEndMethod["UNRESOLVED"] = 0)] = "UNRESOLVED";
+  GameEndMethod[(GameEndMethod["TIME"] = 1)] = "TIME";
+  GameEndMethod[(GameEndMethod["GAME"] = 2)] = "GAME";
+  GameEndMethod[(GameEndMethod["RESOLVED"] = 3)] = "RESOLVED";
+  GameEndMethod[(GameEndMethod["NO_CONTEST"] = 7)] = "NO_CONTEST";
+})(exports.GameEndMethod || (exports.GameEndMethod = {}));
+(function (Input) {
+  Input["D_LEFT"] = "D_LEFT";
+  Input["D_RIGHT"] = "D_RIGHT";
+  Input["D_DOWN"] = "D_DOWN";
+  Input["D_UP"] = "D_UP";
+  Input["Z"] = "Z";
+  Input["R"] = "R";
+  Input["L"] = "L";
+  Input["A"] = "A";
+  Input["B"] = "B";
+  Input["X"] = "X";
+  Input["Y"] = "Y";
+  Input["START"] = "START";
+})(exports.Input || (exports.Input = {}));
+
+/**
+ * Filter the frames to only those that belong to the player {index}.
+ */
+function playerFrameFilter(index) {
+  return (source) =>
+    source.pipe(
+      filter((frame) => {
+        const playerIndices = Object.keys(frame.players);
+        return playerIndices.includes(index.toString());
+      }),
+    );
+}
+/**
+ * Return the previous frame of the game and the current frame
+ */
+function withPreviousFrame() {
+  return (source) =>
+    source.pipe(
+      pairwise(), // We want both the latest frame and the previous frame
+      filter(([prevFrame, latestFrame]) => latestFrame.frame > prevFrame.frame),
+    );
+}
+/**
+ * Return the previous frame of the game and the current frame
+ */
+function filterOnlyFirstFrame() {
+  return (source) => source.pipe(filter((frame) => frame.frame === slippiJs.Frames.FIRST));
+}
+
+/**
+ * Filter only the frames where the player has just spawned
+ */
+function filterJustSpawned(playerIndex) {
+  return (source$) => {
+    const initialSpawn$ = source$.pipe(playerFrameFilter(playerIndex), filterOnlyFirstFrame());
+    const normalSpawns$ = source$.pipe(
+      playerFrameFilter(playerIndex),
+      withPreviousFrame(), // Get previous frame too
+      filter(([prevFrame, latestFrame]) => {
+        const prevActionState = prevFrame.players[playerIndex].post.actionStateId;
+        const currActionState = latestFrame.players[playerIndex].post.actionStateId;
+        // We only care about the frames where we just spawned
+        return slippiJs.isDead(prevActionState) && !slippiJs.isDead(currActionState);
+      }),
+      map(([_, latestFrame]) => latestFrame),
+    );
+    return rxjs.merge(initialSpawn$, normalSpawns$);
+  };
+}
+/**
+ * Filter only the frames where the player has just spawned
+ */
+// export function filterJustDied(playerIndex: number): MonoTypeOperatorFunction<FrameEntryType> {
+//   return (source$): Observable<FrameEntryType> => {
+//     return source$.pipe(
+//       playerFilter(playerIndex),
+//       withPreviousFrame(),                  // Get previous frame too
+//       filter(([prevFrame, latestFrame]) => {
+//         const prevPostFrame = prevFrame.players[playerIndex].post;
+//         const currPostFrame = latestFrame.players[playerIndex].post;
+//         // We only care about the frames where we just spawned
+//         return didLoseStock(currPostFrame, prevPostFrame);
+//       }),
+//       map(([_, latestFrame]) => latestFrame),
+//     );
+//   }
+// }
+function mapFrameToSpawnStockType(settings$, playerIndex) {
+  return (source) =>
+    source.pipe(
+      withLatestFrom(settings$),
+      map(([frame, settings]) => {
+        const player = settings.players.find((player) => player.playerIndex === playerIndex);
+        const opponent = settings.players.find((player) => player.playerIndex !== playerIndex);
+        const stock = {
+          playerIndex: player.playerIndex,
+          opponentIndex: opponent.playerIndex,
+          startFrame: frame.frame,
+          endFrame: null,
+          startPercent: 0,
+          endPercent: null,
+          currentPercent: 0,
+          count: frame.stocksRemaining,
+          deathAnimation: null,
+        };
+        return stock;
+      }),
+    );
+}
+function mapFramesToDeathStockType(playerSpawned$) {
+  return (source) =>
+    source.pipe(
+      withLatestFrom(playerSpawned$),
+      map(([[prevPlayerFrame, playerFrame], spawnStock]) => ({
+        ...spawnStock,
+        endFrame: playerFrame.frame,
+        endPercent: prevPlayerFrame.percent || 0,
+        currentPercent: prevPlayerFrame.percent || 0,
+        deathAnimation: playerFrame.actionStateId,
+      })),
+    );
+}
+
+/**
+ * Return the previous frame of the game and the current frame
+ */
+function pausable(stop, restart) {
+  return (source) =>
+    source.pipe(
+      takeUntil(stop),
+      repeatWhen(() => restart),
+    );
+}
 
 const characterMap = new Map()
   .set(slippiJs.Character.CAPTAIN_FALCON, {
@@ -2383,24 +2531,18 @@ function getStageShortName(stageId) {
   return stage.shortName || getStageName(stageId);
 }
 
-function extractPlayerNamesByPort(settings, metadata) {
-  return [0, 1, 2, 3].map((index) => {
-    var _a, _b;
-    const nametags = [];
+function extractPlayerNames(settings, metadata, playerIndex) {
+  const nametags = [];
+  let indices = settings.players.map((p) => p.playerIndex);
+  // If playerIndex is provided use that
+  if (playerIndex !== undefined) {
+    indices = [playerIndex];
+  }
+  for (const index of indices) {
     const player = settings.players.find((player) => player.playerIndex === index);
     const playerTag = player ? player.nametag : null;
-    const netplayName =
-      (_a = lodash.get(metadata, ["players", index, "names", "netplay"], null)) !== null && _a !== void 0
-        ? _a
-        : player === null || player === void 0
-        ? void 0
-        : player.displayName;
-    const netplayCode =
-      (_b = lodash.get(metadata, ["players", index, "names", "code"], null)) !== null && _b !== void 0
-        ? _b
-        : player === null || player === void 0
-        ? void 0
-        : player.connectCode;
+    const netplayName = lodash.get(metadata, ["players", index, "names", "netplay"], null);
+    const netplayCode = lodash.get(metadata, ["players", index, "names", "code"], null);
     if (netplayName) {
       nametags.push(netplayName);
     }
@@ -2410,11 +2552,8 @@ function extractPlayerNamesByPort(settings, metadata) {
     if (playerTag) {
       nametags.push(playerTag);
     }
-    return nametags;
-  });
-}
-function extractPlayerNames(settings, metadata) {
-  return extractPlayerNamesByPort(settings, metadata).flat();
+  }
+  return nametags;
 }
 function namesMatch(lookingForNametags, inGameTags, fuzzyMatch) {
   if (lookingForNametags.length === 0 || inGameTags.length === 0) {
@@ -2441,47 +2580,35 @@ function namesMatch(lookingForNametags, inGameTags, fuzzyMatch) {
 /**
  * MatchesPortNumber ensures the player performing the combo is a specific port.
  */
-const MatchesPortNumber = (combo, _settings, options) => {
-  const move = combo.moves.find((move) => options.portFilter.includes(move.playerIndex + 1));
-  return Boolean(move);
+const MatchesPortNumber = (combo, settings, options) => {
+  const player = settings.players.find((player) => player.playerIndex === combo.playerIndex);
+  return options.portFilter.includes(player.port);
 };
 const MatchesPlayerName = (combo, settings, options, metadata) => {
   if (options.nameTags.length === 0) {
     return true;
   }
-  const allMatchableNames = extractPlayerNamesByPort(settings, metadata);
-  const uniquePlayerIds = new Set(combo.moves.map((move) => move.playerIndex));
-  const match = Array.from(uniquePlayerIds).find((playerIndex) => {
-    const matchableNames = allMatchableNames[playerIndex];
-    if (matchableNames.length === 0) {
-      // We're looking for a nametag but we have nothing to match against
-      return false;
-    }
-    return namesMatch(options.nameTags, matchableNames, options.fuzzyNameTagMatching);
-  });
-  return match !== undefined;
+  const matchableNames = extractPlayerNames(settings, metadata, combo.playerIndex);
+  if (matchableNames.length === 0) {
+    // We're looking for a nametag but we have nothing to match against
+    return false;
+  }
+  return namesMatch(options.nameTags, matchableNames, options.fuzzyNameTagMatching);
 };
 const MatchesCharacter = (combo, settings, options) => {
-  return comboMatchesCharacter(combo, settings, options.characterFilter);
-};
-const comboMatchesCharacter = (combo, settings, characterFilter) => {
-  if (characterFilter.length === 0) {
+  if (options.characterFilter.length === 0) {
     return true;
   }
-  const matches = combo.moves.find((move) => {
-    const player = settings.players.find((player) => player.playerIndex === move.playerIndex);
-    if (!player || player.characterId === null) {
-      return false;
-    }
-    return characterFilter.includes(player.characterId);
-  });
-  return Boolean(matches);
+  const player = settings.players.find((player) => player.playerIndex === combo.playerIndex);
+  const matchesCharacter = options.characterFilter.includes(player.characterId);
+  return matchesCharacter;
 };
 const ExcludesChainGrabs = (combo, settings, options) => {
   if (!options.excludeChainGrabs) {
     return true;
   }
-  if (!comboMatchesCharacter(combo, settings, options.chainGrabbers)) {
+  const player = settings.players.find((player) => player.playerIndex === combo.playerIndex);
+  if (!options.chainGrabbers.includes(player.characterId)) {
     return true;
   }
   const numUpThrowPummels = combo.moves.filter(
@@ -2496,7 +2623,8 @@ const ExcludesWobbles = (combo, settings, options) => {
   if (!options.excludeWobbles) {
     return true;
   }
-  if (!comboMatchesCharacter(combo, settings, [slippiJs.Character.ICE_CLIMBERS])) {
+  const player = settings.players.find((player) => player.playerIndex === combo.playerIndex);
+  if (player.characterId !== slippiJs.Character.ICE_CLIMBERS) {
     // Continue processing if the character is not Ice Climbers
     return true;
   }
@@ -2515,46 +2643,33 @@ const ExcludesWobbles = (combo, settings, options) => {
   // Only continue processing if the combo is not a wobble
   return !wobbled;
 };
-const SatisfiesMinComboLength = (combo, _settings, options) => {
+const SatisfiesMinComboLength = (combo, settings, options) => {
   const numMoves = combo.moves.length;
   return numMoves >= options.minComboLength;
 };
 const SatisfiesMinComboPercent = (combo, settings, options) => {
-  if (settings.players.length !== 2) {
-    return true;
-  }
-  const move = combo.moves.find((move) => move.playerIndex !== combo.playerIndex);
-  if (!move) {
-    return false;
-  }
-  const player = settings.players.find((p) => p.playerIndex === move.playerIndex);
-  if (!player || player.characterId === null) {
-    return false;
-  }
+  const player = settings.players.find((player) => player.playerIndex === combo.playerIndex);
   const minComboPercent = options.perCharacterMinComboPercent[player.characterId] || options.minComboPercent;
-  const totalComboPercent =
-    combo.endPercent === null || combo.endPercent === undefined
-      ? combo.startPercent
-      : combo.endPercent - combo.startPercent;
+  const totalComboPercent = combo.endPercent - combo.startPercent;
   // Continue only if the total combo percent was greater than the threshold
   return totalComboPercent > minComboPercent;
 };
-const ExcludesLargeSingleHit = (combo, _settings, options) => {
+const ExcludesLargeSingleHit = (combo, settings, options) => {
   const totalDmg = lodash.sumBy(combo.moves, ({ damage }) => damage);
   const largeSingleHit = combo.moves.some(({ damage }) => damage / totalDmg >= options.largeHitThreshold);
   return !largeSingleHit;
 };
-const ExcludesCPUs = (_combo, settings, options) => {
+const ExcludesCPUs = (combo, settings, options) => {
   if (!options.excludeCPUs) {
     return true;
   }
   const cpu = settings.players.some((player) => player.type != 0);
   return !cpu;
 };
-const IsOneVsOne = (_combo, settings) => {
+const IsOneVsOne = (combo, settings) => {
   return settings.players.length === 2;
 };
-const ComboDidKill = (combo, _settings, options) => {
+const ComboDidKill = (combo, settings, options) => {
   return !options.comboMustKill || combo.didKill;
 };
 const ALL_CRITERIA = [
@@ -2628,36 +2743,6 @@ const checkCombo = (comboSettings, combo, gameSettings, metadata, criteria) => {
   return true;
 };
 
-// Export the parameter types for events and SlippiGame for convenience
-(function (GameEndMethod) {
-  GameEndMethod[(GameEndMethod["UNRESOLVED"] = 0)] = "UNRESOLVED";
-  GameEndMethod[(GameEndMethod["TIME"] = 1)] = "TIME";
-  GameEndMethod[(GameEndMethod["GAME"] = 2)] = "GAME";
-  GameEndMethod[(GameEndMethod["RESOLVED"] = 3)] = "RESOLVED";
-  GameEndMethod[(GameEndMethod["NO_CONTEST"] = 7)] = "NO_CONTEST";
-})(exports.GameEndMethod || (exports.GameEndMethod = {}));
-(function (Input) {
-  Input["D_LEFT"] = "D_LEFT";
-  Input["D_RIGHT"] = "D_RIGHT";
-  Input["D_DOWN"] = "D_DOWN";
-  Input["D_UP"] = "D_UP";
-  Input["Z"] = "Z";
-  Input["R"] = "R";
-  Input["L"] = "L";
-  Input["A"] = "A";
-  Input["B"] = "B";
-  Input["X"] = "X";
-  Input["Y"] = "Y";
-  Input["START"] = "START";
-})(exports.Input || (exports.Input = {}));
-
-// Based on https://github.com/wilsonzlin/edgesearch/blob/d03816dd4b18d3d2eb6d08cb1ae14f96f046141d/demo/wiki/client/src/util/util.ts
-// Ensures value is not null or undefined.
-// != does no type validation so we don't need to explcitly check for undefined.
-function exists(value) {
-  return value != null;
-}
-
 var InputBit;
 (function (InputBit) {
   InputBit[(InputBit["D_LEFT"] = 1)] = "D_LEFT";
@@ -2695,7 +2780,7 @@ const generateInputBitmask = (...buttons) => {
 };
 const mapInputToBits = (button) => {
   const b = inputBitMap.get(button);
-  if (!exists(b)) {
+  if (!b) {
     throw new Error(`Unknown input: ${button}`);
   }
   return b;
@@ -2870,7 +2955,7 @@ const defaultDolphinLauncherOptions = {
   disableSeekBar: false,
   readEvents: true,
   startBuffer: 1,
-  endBuffer: 1, // Match the start frame because why not
+  endBuffer: 1,
 };
 class DolphinLauncher {
   constructor(options) {
@@ -2955,7 +3040,7 @@ const mapDolphinEntry = (entry, startBuffer, endBuffer) => {
   if (combo) {
     dolphinEntry.startFrame = Math.max(slippiJs.Frames.FIRST, combo.startFrame - startBuffer);
     // If endFrame is undefined it will just play to the end
-    if (exists(combo.endFrame)) {
+    if (combo.endFrame) {
       dolphinEntry.endFrame = combo.endFrame + endBuffer;
     }
   }
@@ -2985,16 +3070,8 @@ const pipeFileContents = async (filename, destination, options) => {
  * @returns the player index of the winner
  */
 const findWinner = (lastFrame) => {
-  const postFrameEntries = Object.keys(lastFrame.players)
-    .map((i) => {
-      var _a;
-      return (_a = lastFrame.players[i]) === null || _a === void 0 ? void 0 : _a.post;
-    })
-    .filter(exists);
+  const postFrameEntries = Object.keys(lastFrame.players).map((i) => lastFrame.players[i].post);
   const winnerPostFrame = postFrameEntries.reduce((a, b) => {
-    if (!exists(a.stocksRemaining) || !exists(b.stocksRemaining) || !exists(a.percent) || !exists(b.percent)) {
-      return a;
-    }
     // Determine winner based on stock count
     if (a.stocksRemaining > b.stocksRemaining) {
       return a;
@@ -3015,23 +3092,151 @@ const findWinner = (lastFrame) => {
   return winnerPostFrame.playerIndex;
 };
 
-(function (ComboEvent) {
-  ComboEvent["START"] = "combo-start";
-  ComboEvent["EXTEND"] = "combo-extend";
-  ComboEvent["END"] = "combo-occurred";
-  ComboEvent["CONVERSION"] = "conversion-occurred";
-})(exports.ComboEvent || (exports.ComboEvent = {}));
-(function (GameEvent) {
-  GameEvent["GAME_START"] = "game-start";
-  GameEvent["GAME_END"] = "game-end";
-})(exports.GameEvent || (exports.GameEvent = {}));
-(function (InputEvent) {
-  InputEvent["BUTTON_COMBO"] = "button-combo";
-})(exports.InputEvent || (exports.InputEvent = {}));
-(function (StockEvent) {
-  StockEvent["PLAYER_SPAWN"] = "player-spawn";
-  StockEvent["PLAYER_DIED"] = "player-died";
-})(exports.StockEvent || (exports.StockEvent = {}));
+/**
+ * Throttle inputs for a number of frames
+ */
+function throttleInputButtons(frames) {
+  return (source) =>
+    source.pipe(
+      distinctUntilChanged((prev, curr) => {
+        // Should we discard this value?
+        // Discard if the current frame is still within the lockout duration
+        return curr.frame < prev.frame + frames;
+      }),
+    );
+}
+function mapFramesToButtonInputs(index, buttons, duration = 1) {
+  const controlBitMask = generateInputBitmask(...buttons);
+  return (source) =>
+    source.pipe(
+      // Filter for the specific player
+      playerFrameFilter(index),
+      // Map the frames to whether the button combination was pressed or not
+      // while tracking the frame number
+      map((f) => {
+        const buttonCombo = f.players[index].pre.physicalButtons;
+        const buttonComboPressed = (buttonCombo & controlBitMask) === controlBitMask;
+        return {
+          frame: f.frame,
+          buttonPressed: buttonComboPressed,
+          buttonCombo: bitmaskToButtons(buttonCombo),
+        };
+      }),
+      // Count the number of consecutively pressed frames
+      scan(
+        (acc, data) => {
+          const count = data.buttonPressed ? acc.count + 1 : 0;
+          return {
+            count,
+            frame: data.frame,
+            buttonCombo: data.buttonCombo,
+          };
+        },
+        {
+          count: 0,
+          frame: slippiJs.Frames.FIRST,
+          buttonCombo: [],
+        },
+      ),
+      // Filter to be the exact frame when we pressed the combination for sufficient frames
+      filter((n) => n.count === duration),
+      // Return the player index which triggered the button press
+      map((data) => ({
+        playerIndex: index,
+        combo: data.buttonCombo,
+        frame: data.frame,
+        duration,
+      })),
+    );
+}
+
+const readInputsConfig = (inputs, config) => {
+  return readButtonComboEvents(config, (buttons, duration) => inputs.buttonCombo(buttons, duration));
+};
+const readButtonComboEvents = (eventConfig, playerInput) => {
+  // Handle game start events
+  const observables = eventConfig.events
+    .filter((event) => event.type === exports.InputEvent.BUTTON_COMBO)
+    .filter((event) => event.filter && event.filter.combo && event.filter.combo.length > 0) // We must have a valid filter
+    .map((event) => {
+      let duration = 1;
+      if (event.filter.duration && event.filter.duration > 1) {
+        duration = Math.floor(event.filter.duration);
+      }
+      let base$ = playerInput(event.filter.combo, duration);
+      if (event.filter) {
+        // Handle num players filter
+        if (event.filter.playerIndex !== undefined) {
+          base$ = base$.pipe(playerFilter(event.filter.playerIndex, eventConfig.variables));
+        }
+      }
+      return base$.pipe(
+        map((context) => ({
+          id: event.id,
+          type: event.type,
+          payload: context,
+        })),
+      );
+    });
+  return rxjs.merge(...observables);
+};
+
+const readStocksConfig = (stocks, config) => {
+  return rxjs.merge(
+    readPlayerSpawnEvents(config, stocks.playerSpawn$),
+    readPlayerDiedEvents(config, stocks.playerDied$),
+  );
+};
+const readPlayerSpawnEvents = (eventConfig, playerSpawn$) => {
+  // Handle game start events
+  const observables = eventConfig.events
+    .filter((event) => event.type === exports.StockEvent.PLAYER_SPAWN)
+    .map((event) => {
+      let base$ = playerSpawn$;
+      const eventFilter = event.filter;
+      if (eventFilter) {
+        // Handle num players filter
+        for (const filterOption of Object.keys(eventFilter)) {
+          switch (filterOption) {
+            case "playerIndex":
+              base$ = base$.pipe(playerFilter(eventFilter.playerIndex, eventConfig.variables));
+              break;
+          }
+        }
+      }
+      return base$.pipe(
+        map((context) => ({
+          id: event.id,
+          type: event.type,
+          payload: context,
+        })),
+      );
+    });
+  return rxjs.merge(...observables);
+};
+const readPlayerDiedEvents = (eventConfig, playerDied$) => {
+  // Handle game end events
+  const observables = eventConfig.events
+    .filter((event) => event.type === exports.StockEvent.PLAYER_DIED)
+    .map((event) => {
+      const eventFilter = event.filter;
+      let base$ = playerDied$;
+      if (eventFilter) {
+        // Handle num players filter
+        if (eventFilter.playerIndex !== undefined) {
+          base$ = base$.pipe(playerFilter(eventFilter.playerIndex, eventConfig.variables));
+        }
+      }
+      return base$.pipe(
+        map((context) => ({
+          id: event.id,
+          type: event.type,
+          payload: context,
+        })),
+      );
+    });
+  return rxjs.merge(...observables);
+};
 
 const readComboConfig = (combo, config) => {
   const startObservables = config.events
@@ -3103,7 +3308,7 @@ const handleComboFilter = (base$, event, variables) => {
   if (eventFilter && eventFilter.comboCriteria) {
     const options = eventFilter.comboCriteria;
     if (typeof options === "string") {
-      if (options.charAt(0) === "$" && exists(variables) && variables[options]) {
+      if (options.charAt(0) === "$" && variables[options]) {
         comboSettings = Object.assign(comboSettings, variables[options]);
       } else if (options === "none") {
         // Require explicit specification for no criteria matching
@@ -3114,356 +3319,6 @@ const handleComboFilter = (base$, event, variables) => {
     }
   }
   return base$.pipe(filter((payload) => checkCombo(comboSettings, payload.combo, payload.settings)));
-};
-
-const readGameConfig = (game, config) => {
-  return rxjs.merge(readGameStartEvents(config, game.start$), readGameEndEvents(config, game.end$));
-};
-const readGameStartEvents = (config, gameStart$) => {
-  // Handle game start events
-  const observables = config.events
-    .filter((event) => event.type === exports.GameEvent.GAME_START)
-    .map((event) => {
-      let base$ = gameStart$;
-      const eventFilter = event.filter;
-      if (eventFilter) {
-        // Handle num players filter
-        if (eventFilter.numPlayers !== undefined) {
-          base$ = base$.pipe(filter((settings) => settings.players.length === eventFilter.numPlayers));
-        }
-        if (eventFilter.isTeams !== undefined) {
-          base$ = base$.pipe(filter((settings) => settings.isTeams === eventFilter.isTeams));
-        }
-      }
-      return base$.pipe(
-        map((context) => ({
-          id: event.id,
-          type: event.type,
-          payload: context,
-        })),
-      );
-    });
-  return rxjs.merge(...observables);
-};
-const readGameEndEvents = (config, gameEnd$) => {
-  // Handle game end events
-  const observables = config.events
-    .filter((event) => event.type === exports.GameEvent.GAME_END)
-    .map((event) => {
-      let base$ = gameEnd$;
-      const eventFilter = event.filter;
-      if (eventFilter) {
-        // Handle end method filter
-        if (eventFilter.endMethod !== undefined) {
-          base$ = base$.pipe(filter((end) => end.gameEndMethod === eventFilter.endMethod));
-        }
-        const winner = eventFilter.winnerPlayerIndex;
-        if (exists(winner)) {
-          base$ = base$.pipe(
-            filter((payload) => playerFilterMatches(payload.winnerPlayerIndex, winner, config.variables)),
-          );
-        }
-      }
-      return base$.pipe(
-        map((context) => ({
-          id: event.id,
-          type: event.type,
-          payload: context,
-        })),
-      );
-    });
-  return rxjs.merge(...observables);
-};
-
-/**
- * Filter the frames to only those that belong to the player {index}.
- */
-function playerFrameFilter(index) {
-  return (source) =>
-    source.pipe(
-      filter((frame) => {
-        const playerIndices = Object.keys(frame.players);
-        return playerIndices.includes(index.toString());
-      }),
-    );
-}
-/**
- * Return the previous frame of the game and the current frame
- */
-function withPreviousFrame() {
-  return (source) =>
-    source.pipe(
-      pairwise(), // We want both the latest frame and the previous frame
-      filter(([{ frame: prevFrameNum }, { frame: latestFrameNum }]) => {
-        return exists(prevFrameNum) && exists(latestFrameNum) && latestFrameNum > prevFrameNum;
-      }),
-    );
-}
-/**
- * Return the previous frame of the game and the current frame
- */
-function filterOnlyFirstFrame() {
-  return (source) => source.pipe(filter((frame) => frame.frame === slippiJs.Frames.FIRST));
-}
-
-/**
- * Throttle inputs for a number of frames
- */
-function throttleInputButtons(frames) {
-  return (source) =>
-    source.pipe(
-      distinctUntilChanged((prev, curr) => {
-        // Should we discard this value?
-        // Discard if the current frame is still within the lockout duration
-        return curr.frame < prev.frame + frames;
-      }),
-    );
-}
-function mapFramesToButtonInputs(index, buttons, duration = 1) {
-  const controlBitMask = generateInputBitmask(...buttons);
-  return (source) =>
-    source.pipe(
-      // Filter for the specific player
-      playerFrameFilter(index),
-      // Map the frames to whether the button combination was pressed or not
-      // while tracking the frame number
-      map((f) => {
-        var _a;
-        const buttonCombo = (_a = f.players[index]) === null || _a === void 0 ? void 0 : _a.pre.physicalButtons;
-        if (!exists(buttonCombo)) {
-          return null;
-        }
-        const buttonComboPressed = (buttonCombo & controlBitMask) === controlBitMask;
-        return {
-          frame: f.frame,
-          buttonPressed: buttonComboPressed,
-          buttonCombo: bitmaskToButtons(buttonCombo),
-        };
-      }),
-      filter(exists),
-      // Count the number of consecutively pressed frames
-      scan(
-        (acc, data) => {
-          const count = data.buttonPressed ? acc.count + 1 : 0;
-          return {
-            count,
-            frame: data.frame,
-            buttonCombo: data.buttonCombo,
-          };
-        },
-        {
-          count: 0,
-          frame: slippiJs.Frames.FIRST,
-          buttonCombo: [],
-        },
-      ),
-      // Filter to be the exact frame when we pressed the combination for sufficient frames
-      filter((n) => n.count === duration),
-      // Return the player index which triggered the button press
-      map((data) => ({
-        playerIndex: index,
-        combo: data.buttonCombo,
-        frame: data.frame,
-        duration,
-      })),
-    );
-}
-
-/**
- * Return the previous frame of the game and the current frame
- */
-function pausable(stop, restart) {
-  return (source) =>
-    source.pipe(
-      takeUntil(stop),
-      repeatWhen(() => restart),
-    );
-}
-
-/**
- * Filter only the frames where the player has just spawned
- */
-function filterJustSpawned(playerIndex) {
-  return (source$) => {
-    const initialSpawn$ = source$.pipe(playerFrameFilter(playerIndex), filterOnlyFirstFrame());
-    const normalSpawns$ = source$.pipe(
-      playerFrameFilter(playerIndex),
-      withPreviousFrame(), // Get previous frame too
-      filter(([prevFrame, latestFrame]) => {
-        var _a, _b, _c, _d;
-        const prevActionState =
-          (_b = (_a = prevFrame.players[playerIndex]) === null || _a === void 0 ? void 0 : _a.post.actionStateId) !==
-            null && _b !== void 0
-            ? _b
-            : null;
-        const currActionState =
-          (_d = (_c = latestFrame.players[playerIndex]) === null || _c === void 0 ? void 0 : _c.post.actionStateId) !==
-            null && _d !== void 0
-            ? _d
-            : null;
-        if (prevActionState === null || currActionState === null) {
-          return false;
-        }
-        // We only care about the frames where we just spawned
-        return slippiJs.isDead(prevActionState) && !slippiJs.isDead(currActionState);
-      }),
-      map(([_, latestFrame]) => latestFrame),
-    );
-    return rxjs.merge(initialSpawn$, normalSpawns$);
-  };
-}
-/**
- * Filter only the frames where the player has just spawned
- */
-// export function filterJustDied(playerIndex: number): MonoTypeOperatorFunction<FrameEntryType> {
-//   return (source$): Observable<FrameEntryType> => {
-//     return source$.pipe(
-//       playerFilter(playerIndex),
-//       withPreviousFrame(),                  // Get previous frame too
-//       filter(([prevFrame, latestFrame]) => {
-//         const prevPostFrame = prevFrame.players[playerIndex].post;
-//         const currPostFrame = latestFrame.players[playerIndex].post;
-//         // We only care about the frames where we just spawned
-//         return didLoseStock(currPostFrame, prevPostFrame);
-//       }),
-//       map(([_, latestFrame]) => latestFrame),
-//     );
-//   }
-// }
-function mapFrameToSpawnStockType(settings$, playerIndex) {
-  return (source) =>
-    source.pipe(
-      withLatestFrom(settings$),
-      map(([frame, settings]) => {
-        const player = settings.players.find((player) => player.playerIndex === playerIndex);
-        if (!player || !exists(frame.frame) || !exists(frame.stocksRemaining)) {
-          return null;
-        }
-        const stock = {
-          playerIndex: player.playerIndex,
-          startFrame: frame.frame,
-          endFrame: null,
-          startPercent: 0,
-          endPercent: null,
-          currentPercent: 0,
-          count: frame.stocksRemaining,
-          deathAnimation: null,
-        };
-        return stock;
-      }),
-      filter(exists),
-    );
-}
-function mapFramesToDeathStockType(playerSpawned$) {
-  return (source) =>
-    source.pipe(
-      withLatestFrom(playerSpawned$),
-      map(([[prevPlayerFrame, playerFrame], spawnStock]) => {
-        var _a, _b;
-        return {
-          ...spawnStock,
-          endFrame: playerFrame.frame,
-          endPercent: (_a = prevPlayerFrame.percent) !== null && _a !== void 0 ? _a : 0,
-          currentPercent: (_b = prevPlayerFrame.percent) !== null && _b !== void 0 ? _b : 0,
-          deathAnimation: playerFrame.actionStateId,
-        };
-      }),
-    );
-}
-
-const readInputsConfig = (inputs, config) => {
-  return readButtonComboEvents(config, (buttons, duration) => inputs.buttonCombo(buttons, duration));
-};
-const readButtonComboEvents = (eventConfig, playerInput) => {
-  // Handle game start events
-  const observables = eventConfig.events
-    .filter(filterValidButtonCombo) // We must have a valid filter
-    .map((event) => {
-      let duration = 1;
-      if (exists(event.filter.duration) && event.filter.duration > 1) {
-        duration = Math.floor(event.filter.duration);
-      }
-      let base$ = playerInput(event.filter.combo, duration);
-      if (event.filter) {
-        // Handle num players filter
-        if (event.filter.playerIndex !== undefined) {
-          base$ = base$.pipe(playerFilter(event.filter.playerIndex, eventConfig.variables));
-        }
-      }
-      return base$.pipe(
-        map((context) => ({
-          id: event.id,
-          type: event.type,
-          payload: context,
-        })),
-      );
-    });
-  return rxjs.merge(...observables);
-};
-function filterValidButtonCombo(event) {
-  return (
-    event.type === exports.InputEvent.BUTTON_COMBO &&
-    exists(event.filter) &&
-    event.filter.combo &&
-    event.filter.combo.length > 0
-  ); // We must have a valid filter
-}
-
-const readStocksConfig = (stocks, config) => {
-  return rxjs.merge(
-    readPlayerSpawnEvents(config, stocks.playerSpawn$),
-    readPlayerDiedEvents(config, stocks.playerDied$),
-  );
-};
-const readPlayerSpawnEvents = (eventConfig, playerSpawn$) => {
-  // Handle game start events
-  const observables = eventConfig.events
-    .filter((event) => event.type === exports.StockEvent.PLAYER_SPAWN)
-    .map((event) => {
-      let base$ = playerSpawn$;
-      const eventFilter = event.filter;
-      if (eventFilter && exists(eventFilter.playerIndex)) {
-        // Handle num players filter
-        for (const filterOption of Object.keys(eventFilter)) {
-          switch (filterOption) {
-            case "playerIndex":
-              base$ = base$.pipe(playerFilter(eventFilter.playerIndex, eventConfig.variables));
-              break;
-          }
-        }
-      }
-      return base$.pipe(
-        map((context) => ({
-          id: event.id,
-          type: event.type,
-          payload: context,
-        })),
-      );
-    });
-  return rxjs.merge(...observables);
-};
-const readPlayerDiedEvents = (eventConfig, playerDied$) => {
-  // Handle game end events
-  const observables = eventConfig.events
-    .filter((event) => event.type === exports.StockEvent.PLAYER_DIED)
-    .map((event) => {
-      const eventFilter = event.filter;
-      let base$ = playerDied$;
-      if (eventFilter) {
-        // Handle num players filter
-        if (eventFilter.playerIndex !== undefined) {
-          base$ = base$.pipe(playerFilter(eventFilter.playerIndex, eventConfig.variables));
-        }
-      }
-      return base$.pipe(
-        map((context) => ({
-          id: event.id,
-          type: event.type,
-          payload: context,
-        })),
-      );
-    });
-  return rxjs.merge(...observables);
 };
 
 class EventManager {
@@ -3491,56 +3346,370 @@ class EventManager {
 
 class ConversionEvents {
   constructor(stream) {
-    this.conversionComputer = new slippiJs.ConversionComputer();
-    this.end$ = rxjs.fromEvent(this.conversionComputer, "CONVERSION").pipe(share());
+    this.playerPermutations = new Array();
+    this.conversions = new Array();
+    this.state = new Map();
+    this.conversionSource = new rxjs.Subject();
+    this.end$ = this.conversionSource.asObservable();
     this.stream$ = stream;
     // Reset the state on game start
     this.stream$.pipe(switchMap((s) => s.gameStart$)).subscribe((settings) => {
-      this.conversionComputer.setup(settings);
+      this.resetState();
+      // We only care about the 2 player games
+      if (settings.players.length === 2) {
+        const perms = slippiJs.getSinglesPlayerPermutationsFromSettings(settings);
+        this.setPlayerPermutations(perms);
+        this.settings = settings;
+      }
     });
     // Handle the frame processing
     this.stream$
       .pipe(
-        switchMap((s) => s.allFrames$),
+        switchMap((s) => s.playerFrame$),
         // We only want the frames for two player games
-        filter(({ latestFrame }) => {
-          const players = Object.keys(latestFrame.players);
+        filter((frame) => {
+          const players = Object.keys(frame.players);
           return players.length === 2;
         }),
+        withPreviousFrame(),
       )
-      .subscribe(({ latestFrame, allFrames }) => {
-        this.conversionComputer.processFrame(latestFrame, allFrames);
+      .subscribe(([prevFrame, latestFrame]) => {
+        this.processFrame(prevFrame, latestFrame);
       });
   }
+  resetState() {
+    this.playerPermutations = new Array();
+    this.state = new Map();
+    this.conversions = new Array();
+  }
+  setPlayerPermutations(playerPermutations) {
+    this.playerPermutations = playerPermutations;
+    this.playerPermutations.forEach((indices) => {
+      const playerState = {
+        conversion: null,
+        move: null,
+        resetCounter: 0,
+        lastHitAnimation: null,
+      };
+      this.state.set(indices, playerState);
+    });
+  }
+  processFrame(prevFrame, latestFrame) {
+    this.playerPermutations.forEach((indices) => {
+      const state = this.state.get(indices);
+      const terminated = handleConversionCompute(state, indices, prevFrame, latestFrame, this.conversions);
+      if (terminated) {
+        this.conversionSource.next({
+          combo: lodash.last(this.conversions),
+          settings: this.settings,
+        });
+      }
+    });
+  }
+}
+function handleConversionCompute(state, indices, prevFrame, latestFrame, conversions) {
+  const playerFrame = latestFrame.players[indices.playerIndex].post;
+  const prevPlayerFrame = prevFrame.players[indices.playerIndex].post;
+  const opponentFrame = latestFrame.players[indices.opponentIndex].post;
+  const prevOpponentFrame = prevFrame.players[indices.opponentIndex].post;
+  const opntIsDamaged = slippiJs.isDamaged(opponentFrame.actionStateId);
+  const opntIsGrabbed = slippiJs.isGrabbed(opponentFrame.actionStateId);
+  const opntDamageTaken = slippiJs.calcDamageTaken(opponentFrame, prevOpponentFrame);
+  // Keep track of whether actionState changes after a hit. Used to compute move count
+  // When purely using action state there was a bug where if you did two of the same
+  // move really fast (such as ganon's jab), it would count as one move. Added
+  // the actionStateCounter at this point which counts the number of frames since
+  // an animation started. Should be more robust, for old files it should always be
+  // null and null < null = false
+  const actionChangedSinceHit = playerFrame.actionStateId !== state.lastHitAnimation;
+  const actionCounter = playerFrame.actionStateCounter;
+  const prevActionCounter = prevPlayerFrame.actionStateCounter;
+  const actionFrameCounterReset = actionCounter < prevActionCounter;
+  if (actionChangedSinceHit || actionFrameCounterReset) {
+    state.lastHitAnimation = null;
+  }
+  // If opponent took damage and was put in some kind of stun this frame, either
+  // start a conversion or
+  if (opntIsDamaged || opntIsGrabbed) {
+    if (!state.conversion) {
+      state.conversion = {
+        playerIndex: indices.playerIndex,
+        opponentIndex: indices.opponentIndex,
+        startFrame: playerFrame.frame,
+        endFrame: null,
+        startPercent: prevOpponentFrame.percent || 0,
+        currentPercent: opponentFrame.percent || 0,
+        endPercent: null,
+        moves: [],
+        didKill: false,
+        openingType: "unknown",
+      };
+      conversions.push(state.conversion);
+    }
+    if (opntDamageTaken) {
+      // If animation of last hit has been cleared that means this is a new move. This
+      // prevents counting multiple hits from the same move such as fox's drill
+      if (!state.lastHitAnimation) {
+        state.move = {
+          frame: playerFrame.frame,
+          moveId: playerFrame.lastAttackLanded,
+          hitCount: 0,
+          damage: 0,
+        };
+        state.conversion.moves.push(state.move);
+      }
+      if (state.move) {
+        state.move.hitCount += 1;
+        state.move.damage += opntDamageTaken;
+      }
+      // Store previous frame animation to consider the case of a trade, the previous
+      // frame should always be the move that actually connected... I hope
+      state.lastHitAnimation = prevPlayerFrame.actionStateId;
+    }
+  }
+  if (!state.conversion) {
+    // The rest of the function handles conversion termination logic, so if we don't
+    // have a conversion started, there is no need to continue
+    return;
+  }
+  const opntInControl = slippiJs.isInControl(opponentFrame.actionStateId);
+  const opntDidLoseStock = slippiJs.didLoseStock(opponentFrame, prevOpponentFrame);
+  // Update percent if opponent didn't lose stock
+  if (!opntDidLoseStock) {
+    state.conversion.currentPercent = opponentFrame.percent || 0;
+  }
+  if (opntIsDamaged || opntIsGrabbed) {
+    // If opponent got grabbed or damaged, reset the reset counter
+    state.resetCounter = 0;
+  }
+  const shouldStartResetCounter = state.resetCounter === 0 && opntInControl;
+  const shouldContinueResetCounter = state.resetCounter > 0;
+  if (shouldStartResetCounter || shouldContinueResetCounter) {
+    // This will increment the reset timer under the following conditions:
+    // 1) if we were punishing opponent but they have now entered an actionable state
+    // 2) if counter has already started counting meaning opponent has entered actionable state
+    state.resetCounter += 1;
+  }
+  let shouldTerminate = false;
+  // Termination condition 1 - player kills opponent
+  if (opntDidLoseStock) {
+    state.conversion.didKill = true;
+    shouldTerminate = true;
+  }
+  // Termination condition 2 - conversion resets on time
+  if (state.resetCounter > slippiJs.Timers.PUNISH_RESET_FRAMES) {
+    shouldTerminate = true;
+  }
+  // If conversion should terminate, mark the end states and add it to list
+  if (shouldTerminate) {
+    state.conversion.endFrame = playerFrame.frame;
+    state.conversion.endPercent = prevOpponentFrame.percent || 0;
+    state.conversion = null;
+    state.move = null;
+  }
+  return shouldTerminate;
 }
 
+var ComboEvent;
+(function (ComboEvent) {
+  ComboEvent["Start"] = "start";
+  ComboEvent["Extend"] = "extend";
+  ComboEvent["End"] = "end";
+})(ComboEvent || (ComboEvent = {}));
 class ComboEvents {
   constructor(stream) {
-    this.comboComputer = new slippiJs.ComboComputer();
-    this.start$ = rxjs.fromEvent(this.comboComputer, "COMBO_START").pipe(share());
-    this.extend$ = rxjs.fromEvent(this.comboComputer, "COMBO_EXTEND").pipe(share());
-    this.end$ = rxjs.fromEvent(this.comboComputer, "COMBO_END").pipe(share());
+    this.playerPermutations = new Array();
+    this.state = new Map();
+    this.combos = new Array();
+    this.comboStartSource = new rxjs.Subject();
+    this.comboExtendSource = new rxjs.Subject();
+    this.comboEndSource = new rxjs.Subject();
+    this.start$ = this.comboStartSource.asObservable();
+    this.extend$ = this.comboExtendSource.asObservable();
+    this.end$ = this.comboEndSource.asObservable();
     this.stream$ = stream;
     const conversionEvents = new ConversionEvents(stream);
     this.conversion$ = conversionEvents.end$;
     // Reset the state on game start
     this.stream$.pipe(switchMap((s) => s.gameStart$)).subscribe((settings) => {
-      this.comboComputer.setup(settings);
+      this.resetState();
+      // We only care about the 2 player games
+      if (settings.players.length === 2) {
+        const perms = slippiJs.getSinglesPlayerPermutationsFromSettings(settings);
+        this.setPlayerPermutations(perms);
+        this.settings = settings;
+      }
     });
     // Handle the frame processing
     this.stream$
       .pipe(
-        switchMap((s) => s.allFrames$),
+        switchMap((s) => s.playerFrame$),
         // We only want the frames for two player games
-        filter(({ latestFrame }) => {
-          const players = Object.keys(latestFrame.players);
+        filter((frame) => {
+          const players = Object.keys(frame.players);
           return players.length === 2;
         }),
+        withPreviousFrame(),
       )
-      .subscribe(({ allFrames, latestFrame }) => {
-        this.comboComputer.processFrame(latestFrame, allFrames);
+      .subscribe(([prevFrame, latestFrame]) => {
+        this.processFrame(prevFrame, latestFrame);
       });
   }
+  resetState() {
+    this.playerPermutations = new Array();
+    this.state = new Map();
+    this.combos = new Array();
+  }
+  setPlayerPermutations(playerPermutations) {
+    this.playerPermutations = playerPermutations;
+    this.playerPermutations.forEach((indices) => {
+      const playerState = {
+        combo: null,
+        move: null,
+        resetCounter: 0,
+        lastHitAnimation: null,
+        event: null,
+      };
+      this.state.set(indices, playerState);
+    });
+  }
+  processFrame(prevFrame, latestFrame) {
+    this.playerPermutations.forEach((indices) => {
+      const state = this.state.get(indices);
+      handleComboCompute(state, indices, prevFrame, latestFrame, this.combos);
+      switch (state.event) {
+        case ComboEvent.Start:
+          this.comboStartSource.next({
+            combo: state.combo,
+            settings: this.settings,
+          });
+          break;
+        case ComboEvent.Extend:
+          this.comboExtendSource.next({
+            combo: state.combo,
+            settings: this.settings,
+          });
+          break;
+        case ComboEvent.End:
+          this.comboEndSource.next({
+            combo: lodash.last(this.combos),
+            settings: this.settings,
+          });
+          break;
+      }
+      if (state.event !== null) {
+        state.event = null;
+      }
+    });
+  }
+}
+function handleComboCompute(state, indices, prevFrame, latestFrame, combos) {
+  const playerFrame = latestFrame.players[indices.playerIndex].post;
+  const prevPlayerFrame = prevFrame.players[indices.playerIndex].post;
+  const opponentFrame = latestFrame.players[indices.opponentIndex].post;
+  const prevOpponentFrame = prevFrame.players[indices.opponentIndex].post;
+  const opntIsDamaged = slippiJs.isDamaged(opponentFrame.actionStateId);
+  const opntIsGrabbed = slippiJs.isGrabbed(opponentFrame.actionStateId);
+  const opntDamageTaken = slippiJs.calcDamageTaken(opponentFrame, prevOpponentFrame);
+  // Keep track of whether actionState changes after a hit. Used to compute move count
+  // When purely using action state there was a bug where if you did two of the same
+  // move really fast (such as ganon's jab), it would count as one move. Added
+  // the actionStateCounter at this point which counts the number of frames since
+  // an animation started. Should be more robust, for old files it should always be
+  // null and null < null = false
+  const actionChangedSinceHit = playerFrame.actionStateId !== state.lastHitAnimation;
+  const actionCounter = playerFrame.actionStateCounter;
+  const prevActionCounter = prevPlayerFrame.actionStateCounter;
+  const actionFrameCounterReset = actionCounter < prevActionCounter;
+  if (actionChangedSinceHit || actionFrameCounterReset) {
+    state.lastHitAnimation = null;
+  }
+  // If opponent took damage and was put in some kind of stun this frame, either
+  // start a combo or count the moves for the existing combo
+  if (opntIsDamaged || opntIsGrabbed) {
+    let comboStarted = false;
+    if (!state.combo) {
+      state.combo = {
+        playerIndex: indices.playerIndex,
+        opponentIndex: indices.opponentIndex,
+        startFrame: playerFrame.frame,
+        endFrame: null,
+        startPercent: prevOpponentFrame.percent || 0,
+        currentPercent: opponentFrame.percent || 0,
+        endPercent: null,
+        moves: [],
+        didKill: false,
+      };
+      combos.push(state.combo);
+      comboStarted = true;
+    }
+    if (opntDamageTaken) {
+      // If animation of last hit has been cleared that means this is a new move. This
+      // prevents counting multiple hits from the same move such as fox's drill
+      if (!state.lastHitAnimation) {
+        state.move = {
+          frame: playerFrame.frame,
+          moveId: playerFrame.lastAttackLanded,
+          hitCount: 0,
+          damage: 0,
+        };
+        state.combo.moves.push(state.move);
+        if (!comboStarted) {
+          state.event = ComboEvent.Extend;
+        }
+      }
+      if (state.move) {
+        state.move.hitCount += 1;
+        state.move.damage += opntDamageTaken;
+      }
+      // Store previous frame animation to consider the case of a trade, the previous
+      // frame should always be the move that actually connected... I hope
+      state.lastHitAnimation = prevPlayerFrame.actionStateId;
+    }
+    if (comboStarted) {
+      state.event = ComboEvent.Start;
+    }
+  }
+  if (!state.combo) {
+    // The rest of the function handles combo termination logic, so if we don't
+    // have a combo started, there is no need to continue
+    return;
+  }
+  const opntIsTeching = slippiJs.isTeching(opponentFrame.actionStateId);
+  const opntIsDowned = slippiJs.isDown(opponentFrame.actionStateId);
+  const opntDidLoseStock = slippiJs.didLoseStock(opponentFrame, prevOpponentFrame);
+  const opntIsDying = slippiJs.isDead(opponentFrame.actionStateId);
+  // Update percent if opponent didn't lose stock
+  if (!opntDidLoseStock) {
+    state.combo.currentPercent = opponentFrame.percent || 0;
+  }
+  if (opntIsDamaged || opntIsGrabbed || opntIsTeching || opntIsDowned || opntIsDying) {
+    // If opponent got grabbed or damaged, reset the reset counter
+    state.resetCounter = 0;
+  } else {
+    state.resetCounter += 1;
+  }
+  let shouldTerminate = false;
+  // Termination condition 1 - player kills opponent
+  if (opntDidLoseStock) {
+    state.combo.didKill = true;
+    shouldTerminate = true;
+  }
+  // Termination condition 2 - combo resets on time
+  if (state.resetCounter > slippiJs.Timers.COMBO_STRING_RESET_FRAMES) {
+    shouldTerminate = true;
+  }
+  // If combo should terminate, mark the end states and add it to list
+  if (shouldTerminate) {
+    state.combo.endFrame = playerFrame.frame;
+    state.combo.endPercent = prevOpponentFrame.percent || 0;
+    state.event = ComboEvent.End;
+    state.combo = null;
+    state.move = null;
+  }
+  // if (state.event) {
+  //   console.log(state.event);
+  // }
 }
 
 class GameEvents {
@@ -3610,11 +3779,7 @@ class StockEvents {
       switchMap((stream) =>
         stream.playerFrame$.pipe(
           filterJustSpawned(index), // Only take the spawn frames
-          map((f) => {
-            var _a;
-            return (_a = f.players[index]) === null || _a === void 0 ? void 0 : _a.post;
-          }), // Only take the post frame data
-          filter(exists),
+          map((f) => f.players[index].post), // Only take the post frame data
           mapFrameToSpawnStockType(stream.gameStart$, index),
         ),
       ),
@@ -3627,11 +3792,7 @@ class StockEvents {
     return this.stream$.pipe(
       switchMap((stream) => stream.playerFrame$),
       playerFrameFilter(index), // We only care about certain player frames
-      map((f) => {
-        var _a;
-        return (_a = f.players[index]) === null || _a === void 0 ? void 0 : _a.post;
-      }), // Only take the post frame data
-      filter(exists),
+      map((f) => f.players[index].post), // Only take the post frame data
       withPreviousFrame(), // Get previous frame too
       filter(([prevFrame, latestFrame]) => slippiJs.didLoseStock(latestFrame, prevFrame)),
       mapFramesToDeathStockType(this.playerIndexSpawn(index)),
@@ -3641,11 +3802,7 @@ class StockEvents {
     return this.stream$.pipe(
       switchMap((stream) => stream.playerFrame$),
       playerFrameFilter(index),
-      map((f) => {
-        var _a;
-        return (_a = f.players[index]) === null || _a === void 0 ? void 0 : _a.post.percent;
-      }),
-      filter(exists),
+      map((f) => f.players[index].post.percent),
       distinctUntilChanged(),
       map((percent) => ({
         playerIndex: index,
@@ -3657,11 +3814,7 @@ class StockEvents {
     return this.stream$.pipe(
       switchMap((stream) => stream.playerFrame$),
       playerFrameFilter(index),
-      map((f) => {
-        var _a;
-        return (_a = f.players[index]) === null || _a === void 0 ? void 0 : _a.post.stocksRemaining;
-      }),
-      filter(exists),
+      map((f) => f.players[index].post.stocksRemaining),
       distinctUntilChanged(),
       map((stocksRemaining) => ({
         playerIndex: index,
@@ -3716,31 +3869,17 @@ class RxSlpStream extends slippiJs.SlpFileWriter {
     super(
       {
         ...options,
-        outputFiles: options && options.outputFiles === true, // Don't write out files unless manually specified
+        outputFiles: options && options.outputFiles === true,
       },
       opts,
     );
     this.parser = new slippiJs.SlpParser({ strict: true }); // Strict mode will enable data validation
     this.messageSizeSource = new rxjs.Subject();
-    this.allFrames = {};
     // Observables
     this.messageSize$ = this.messageSizeSource.asObservable();
     this.gameStart$ = rxjs.fromEvent(this.parser, slippiJs.SlpParserEvent.SETTINGS).pipe(share());
     this.playerFrame$ = rxjs.fromEvent(this.parser, slippiJs.SlpParserEvent.FINALIZED_FRAME).pipe(share());
     this.gameEnd$ = rxjs.fromEvent(this.parser, slippiJs.SlpParserEvent.END).pipe(share());
-    this.allFrames$ = this.playerFrame$.pipe(
-      // Run this side effect first so we can update allFrames
-      tap((latestFrame) => {
-        const frameNum = latestFrame.frame;
-        this.allFrames[frameNum] = latestFrame;
-      }),
-      map((latestFrame) => {
-        return {
-          allFrames: this.allFrames,
-          latestFrame,
-        };
-      }),
-    );
     this.on(slippiJs.SlpStreamEvent.COMMAND, (data) => {
       const { command, payload } = data;
       switch (command) {
@@ -3759,7 +3898,6 @@ class RxSlpStream extends slippiJs.SlpFileWriter {
   restart() {
     this.parser.reset();
     super.restart();
-    this.allFrames = {};
   }
 }
 
@@ -3782,10 +3920,10 @@ class RxSlpStream extends slippiJs.SlpFileWriter {
 class SlpFolderStream extends RxSlpStream {
   constructor(options, opts) {
     super({ ...options, mode: slippiJs.SlpStreamMode.MANUAL }, opts);
+    this.startRequested$ = new rxjs.Subject();
     this.stopRequested$ = new rxjs.Subject();
     this.newFile$ = new rxjs.BehaviorSubject(null);
     this.readStream = null;
-    this.fileWatcher = null;
     this._setupSubjects();
   }
   _setupSubjects() {
@@ -3795,24 +3933,42 @@ class SlpFolderStream extends RxSlpStream {
       if (!filePath) {
         return;
       }
+      console.log(`found a new file: ${filePath}`);
       this.endReadStream();
       // Restart the parser before we begin
       super.restart();
       this.readStream = tailstream.createReadStream(filePath);
       this.readStream.pipe(this, { end: false });
     });
+    // Set up the new file listener
+    this.startRequested$
+      .pipe(
+        switchMap(([slpFolder, includeSubfolders]) => {
+          // End any existing read streams
+          this.endReadStream();
+          // Initialize watcher.
+          const subFolderGlob = includeSubfolders ? "**" : "";
+          const slpGlob = path.join(slpFolder, subFolderGlob, "*.slp");
+          const watcher = chokidar.watch(slpGlob, {
+            ignored: /(^|[\/\\])\../,
+            persistent: true,
+            ignoreInitial: true,
+            ignorePermissionErrors: true,
+          });
+          return rxjs.fromEvent(watcher, "add").pipe(
+            share(),
+            map(([filename]) => path.resolve(filename)),
+            takeUntil(this.stopRequested$),
+          );
+        }),
+      )
+      .subscribe(this.newFile$);
   }
   endReadStream() {
     if (this.readStream) {
       this.readStream.unpipe(this);
       this.readStream.done();
       this.readStream = null;
-    }
-  }
-  stopFileWatcher() {
-    if (this.fileWatcher) {
-      this.fileWatcher.close();
-      this.fileWatcher = null;
     }
   }
   /**
@@ -3822,29 +3978,11 @@ class SlpFolderStream extends RxSlpStream {
    * @param {string} slpFolder
    * @memberof SlpFolderStream
    */
-  async start(slpFolder, options) {
-    // Clean up any existing streams
-    this.stopFileWatcher();
-    this.endReadStream();
-    // Initialize watcher.
-    const subFolderGlob = (options === null || options === void 0 ? void 0 : options.includeSubfolders) ? "**" : "";
-    const slpGlob = path.join(slpFolder, subFolderGlob, "*.slp");
-    const watcher = chokidar.watch(slpGlob, {
-      ignored: /(^|[\/\\])\../,
-      persistent: true,
-      ignoreInitial: true,
-      ignorePermissionErrors: true,
-    });
-    // Wait until the watcher is actually ready
-    await new Promise((resolve) => watcher.once("ready", resolve));
-    // Set up the new file listener
-    watcher.on("add", (filename) => {
-      this.newFile$.next(filename);
-    });
-    this.fileWatcher = watcher;
+  start(slpFolder, includeSubfolders) {
+    console.log(`Start monitoring${includeSubfolders ? " with subfolders" : ""}: ${slpFolder}`);
+    this.startRequested$.next([slpFolder, Boolean(includeSubfolders)]);
   }
   stop() {
-    this.stopFileWatcher();
     this.endReadStream();
     this.stopRequested$.next();
   }
@@ -3866,8 +4004,8 @@ const SLIPPI_CONNECTION_TIMEOUT_MS = 5000;
  * @extends {SlpFileWriter}
  */
 class SlpLiveStream extends RxSlpStream {
-  constructor(connectionType, options, opts) {
-    super(options, opts);
+  constructor(connectionType) {
+    super();
     if (connectionType === "dolphin") {
       this.connection = new slippiJs.DolphinConnection();
     } else {
@@ -3963,6 +4101,12 @@ Object.defineProperty(exports, "Frames", {
     return slippiJs.Frames;
   },
 });
+Object.defineProperty(exports, "SlippiGame", {
+  enumerable: true,
+  get: function () {
+    return slippiJs.SlippiGame;
+  },
+});
 Object.defineProperty(exports, "SlpStreamEvent", {
   enumerable: true,
   get: function () {
@@ -4006,7 +4150,6 @@ exports.bitmaskToButtons = bitmaskToButtons;
 exports.checkCombo = checkCombo;
 exports.defaultComboFilterSettings = defaultComboFilterSettings;
 exports.extractPlayerNames = extractPlayerNames;
-exports.extractPlayerNamesByPort = extractPlayerNamesByPort;
 exports.filterJustSpawned = filterJustSpawned;
 exports.filterOnlyFirstFrame = filterOnlyFirstFrame;
 exports.findWinner = findWinner;

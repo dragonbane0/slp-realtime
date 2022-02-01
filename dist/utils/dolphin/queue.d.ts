@@ -1,4 +1,4 @@
-import type { ComboType } from "../../types";
+import { ComboType } from "../../types";
 export interface DolphinEntry {
   path: string;
   startFrame?: number;
@@ -31,31 +31,27 @@ declare const defaultSettings: {
 export declare type DolphinPlaybackQueueOptions = typeof defaultSettings;
 export declare const generateDolphinQueue: (
   items: DolphinPlaybackItem[],
-  options?:
-    | Partial<{
-        shuffle: boolean;
-        mode: string;
-        replay: string;
-        isRealTimeMode: boolean;
-        outputOverlayFiles: boolean;
-        startBuffer: number;
-        endBuffer: number;
-      }>
-    | undefined,
+  options?: Partial<{
+    shuffle: boolean;
+    mode: string;
+    replay: string;
+    isRealTimeMode: boolean;
+    outputOverlayFiles: boolean;
+    startBuffer: number;
+    endBuffer: number;
+  }>,
 ) => DolphinQueueFormat;
 export declare const generateDolphinQueuePayload: (
   items: DolphinPlaybackItem[],
-  options?:
-    | Partial<{
-        shuffle: boolean;
-        mode: string;
-        replay: string;
-        isRealTimeMode: boolean;
-        outputOverlayFiles: boolean;
-        startBuffer: number;
-        endBuffer: number;
-      }>
-    | undefined,
+  options?: Partial<{
+    shuffle: boolean;
+    mode: string;
+    replay: string;
+    isRealTimeMode: boolean;
+    outputOverlayFiles: boolean;
+    startBuffer: number;
+    endBuffer: number;
+  }>,
   prettify?: boolean,
 ) => string;
 export {};

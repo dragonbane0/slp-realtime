@@ -1,6 +1,6 @@
-import type { Observable } from "rxjs";
-import type { RxSlpStream } from "../stream";
-import type { PercentChange, StockCountChange, StockType } from "../types";
+import { RxSlpStream } from "../stream";
+import { Observable } from "rxjs";
+import { StockType, PercentChange, StockCountChange } from "../types";
 export declare class StockEvents {
   private stream$;
   playerSpawn$: Observable<StockType>;

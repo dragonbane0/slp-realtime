@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import type { ChildProcessWithoutNullStreams } from "child_process";
+import { ChildProcessWithoutNullStreams } from "child_process";
 import { DolphinOutput } from "./output";
 declare const defaultDolphinLauncherOptions: {
   dolphinPath: string;
