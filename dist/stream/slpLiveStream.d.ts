@@ -1,6 +1,8 @@
+/// <reference types="node" />
+import type { Connection, SlpFileWriterOptions } from "@slippi/slippi-js";
+import type { WritableOptions } from "stream";
 import { RxSlpStream } from "./rxSlpStream";
-import { Connection } from "@slippi/slippi-js";
-export { ConnectionEvent, ConsoleConnection, ConnectionStatus } from "@slippi/slippi-js";
+export { ConnectionEvent, ConnectionStatus, ConsoleConnection } from "@slippi/slippi-js";
 /**
  * SlpLiveStream connects to a Wii or Slippi relay and parses all the data
  * and emits SlpStream events.
@@ -16,7 +18,7 @@ export declare class SlpLiveStream extends RxSlpStream {
    * @memberof SlpLiveStream
    */
   connection: Connection;
-  constructor(connectionType?: "dolphin" | "console");
+  constructor(connectionType?: "dolphin" | "console", options?: Partial<SlpFileWriterOptions>, opts?: WritableOptions);
   /**
    * Connect to a Wii or Slippi relay on the specified address and port.
    *

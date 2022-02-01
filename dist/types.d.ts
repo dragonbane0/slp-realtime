@@ -1,15 +1,15 @@
-import { ComboType, GameStartType, GameEndType } from "@slippi/slippi-js";
+import type { ComboType, GameEndType, GameStartType } from "@slippi/slippi-js";
 export {
-  SlippiGame,
-  GameStartType,
-  GameEndType,
   ComboType,
-  StockType,
   ConversionType,
   FrameEntryType,
-  PreFrameUpdateType,
-  PostFrameUpdateType,
   Frames,
+  GameEndType,
+  GameStartType,
+  MetadataType,
+  PostFrameUpdateType,
+  PreFrameUpdateType,
+  StockType,
 } from "@slippi/slippi-js";
 export declare enum GameEndMethod {
   UNRESOLVED = 0,
